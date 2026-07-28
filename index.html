@@ -864,7 +864,7 @@ tr:has(.check-unduhan:checked) td {
 /* ===== WARNA STATUS LAHAN & BANGUNAN - TABEL SEMUA DATA ===== */
 
 /* Status: Milik Sekolah - Hijau */
-#tabel-semua .status-milik-sekolah {
+#tabel-semua .status-milik-sekolah, #tabel-lahan-bangunan .status-milik-sekolah {
   background-color: #dcfce7 !important;
   color: #166534 !important;
   font-weight: 700;
@@ -875,7 +875,7 @@ tr:has(.check-unduhan:checked) td {
 }
 
 /* Status: Milik Pemda - Biru */
-#tabel-semua .status-milik-pemda {
+#tabel-semua .status-milik-pemda, #tabel-lahan-bangunan .status-milik-pemda {
   background-color: #dbeafe !important;
   color: #1e40af !important;
   font-weight: 700;
@@ -886,7 +886,7 @@ tr:has(.check-unduhan:checked) td {
 }
 
 /* Status: Sewa - Kuning */
-#tabel-semua .status-sewa {
+#tabel-semua .status-sewa, #tabel-lahan-bangunan .status-sewa {
   background-color: #fef9c3 !important;
   color: #854d0e !important;
   font-weight: 700;
@@ -897,7 +897,7 @@ tr:has(.check-unduhan:checked) td {
 }
 
 /* Status: Pinjam Pakai - Orange */
-#tabel-semua .status-pinjam-pakai {
+#tabel-semua .status-pinjam-pakai, #tabel-lahan-bangunan .status-pinjam-pakai {
   background-color: #ffedd5 !important;
   color: #9a3412 !important;
   font-weight: 700;
@@ -908,7 +908,7 @@ tr:has(.check-unduhan:checked) td {
 }
 
 /* Status: Pakai Bergantian - Merah */
-#tabel-semua .status-pakai-bergantian {
+#tabel-semua .status-pakai-bergantian, #tabel-lahan-bangunan .status-pakai-bergantian {
   background-color: #fee2e2 !important;
   color: #991b1b !important;
   font-weight: 700;
@@ -919,7 +919,7 @@ tr:has(.check-unduhan:checked) td {
 }
 
 /* Kondisi: Layak - Hijau */
-#tabel-semua .kondisi-layak {
+#tabel-semua .kondisi-layak, #tabel-lahan-bangunan .kondisi-layak {
   background-color: #dcfce7 !important;
   color: #166534 !important;
   font-weight: 700;
@@ -930,7 +930,7 @@ tr:has(.check-unduhan:checked) td {
 }
 
 /* Kondisi: Rusak Ringan - Kuning */
-#tabel-semua .kondisi-rusak-ringan {
+#tabel-semua .kondisi-rusak-ringan, #tabel-lahan-bangunan .kondisi-rusak-ringan {
   background-color: #fef9c3 !important;
   color: #854d0e !important;
   font-weight: 700;
@@ -941,7 +941,7 @@ tr:has(.check-unduhan:checked) td {
 }
 
 /* Kondisi: Rusak Sedang - Orange */
-#tabel-semua .kondisi-rusak-sedang {
+#tabel-semua .kondisi-rusak-sedang, #tabel-lahan-bangunan .kondisi-rusak-sedang {
   background-color: #ffedd5 !important;
   color: #9a3412 !important;
   font-weight: 700;
@@ -952,7 +952,7 @@ tr:has(.check-unduhan:checked) td {
 }
 
 /* Kondisi: Rusak Berat - Merah */
-#tabel-semua .kondisi-rusak-berat {
+#tabel-semua .kondisi-rusak-berat, #tabel-lahan-bangunan .kondisi-rusak-berat {
   background-color: #fee2e2 !important;
   color: #991b1b !important;
   font-weight: 700;
@@ -5214,7 +5214,8 @@ function renderTable(rows){
       const abL=r.kbAbkL+r.kaAbkL+r.tbAbkL;
       const abP=r.kbAbkP+r.kaAbkP+r.tbAbkP;
       const izinDate=parseMDY(r.tglIzin);
-      const izinStatus=(izinDate && daysUntil(izinDate)>0)?'<span class="pill emerald">Aktif</span>':'<span class="pill rose">Tidak aktif</span>';
+      const isNegeri=r.nama.toLowerCase().includes('negeri');
+      const izinStatus=isNegeri?'—':((izinDate && daysUntil(izinDate)>0)?'<span class="pill emerald">Aktif</span>':'<span class="pill rose">Tidak aktif</span>');
       return `<tr data-idx="${RAW.indexOf(r)}" tabindex="0">
         <td class="cell-sub" style="text-align:center">${idx+1}</td>
         <td style="text-align:left;cursor:pointer" onclick="openLaporanDetail(${RAW.indexOf(r)})"><div class="cell-main">${esc(r.nama)}</div></td>
@@ -5246,8 +5247,9 @@ function openLaporanDetail(rawIndex){
   const abP = r.kbAbkP + r.kaAbkP + r.tbAbkP;
   const guruJml = (r.guruL || 0) + (r.guruP || 0);
   const izinDate = parseMDY(r.tglIzin);
-  const izinStatus = (izinDate && daysUntil(izinDate) > 0) ? 'Aktif' : 'Tidak aktif';
-  const izinText = r.tglIzin ? izinStatus + ' (' + esc(r.tglIzin) + ')' : izinStatus;
+  const isNegeri = r.nama.toLowerCase().includes('negeri');
+  const izinStatus = isNegeri ? '—' : ((izinDate && daysUntil(izinDate) > 0) ? 'Aktif' : 'Tidak aktif');
+  const izinText = isNegeri ? '—' : (r.tglIzin ? izinStatus + ' (' + esc(r.tglIzin) + ')' : izinStatus);
 
   document.getElementById('modalLaporanDetailTitle').textContent = esc(r.nama);
   document.getElementById('modalLaporanDetailBody').innerHTML = `
@@ -5531,7 +5533,8 @@ function renderSemuaDataTable(){
     const abkTbJml = (r.tbAbkL||0) + (r.tbAbkP||0);
     const abkTotal = abkKbJml + abkKaJml + abkTbJml;
     const izinDate = parseMDY(r.tglIzin);
-    const izinStatus = (izinDate && daysUntil(izinDate)>0) ? 'Aktif' : 'Tidak Aktif';
+    const isNegeri = r.nama.toLowerCase().includes('negeri');
+    const izinStatus = isNegeri ? '—' : ((izinDate && daysUntil(izinDate)>0) ? 'Aktif' : 'Tidak Aktif');
     return `<tr>
       <td style="text-align:center">${i+1}</td>
       <td class="cell-main">${esc(r.nama)}</td>
@@ -5545,8 +5548,8 @@ function renderSemuaDataTable(){
       <td style="text-align:center">${esc(r.kontak)||'—'}</td>
       <td style="text-align:center"><span class="pill ${pillClass(r.statusAkreditasi)}">${esc(r.statusAkreditasi)}</span></td>
       <td style="text-align:center">${esc(r.tglAkreditasi)||'—'}</td>
-      <td style="text-align:center"><span class="pill ${izinDate && daysUntil(izinDate)>0 ? 'emerald' : 'rose'}">${izinStatus}</span></td>
-      <td style="text-align:center">${esc(r.tglIzin)||'—'}</td>
+      <td style="text-align:center">${isNegeri ? '—' : '<span class="pill ' + (izinDate && daysUntil(izinDate)>0 ? 'emerald' : 'rose') + '">' + izinStatus + '</span>'}</td>
+      <td style="text-align:center">${isNegeri ? '—' : (esc(r.tglIzin)||'—')}</td>
       <td style="text-align:center">${fmtNum(r.guruL)}</td>
       <td style="text-align:center">${fmtNum(r.guruP)}</td>
       <td style="text-align:center;font-weight:700">${fmtNum(guruJml)}</td>
@@ -5650,7 +5653,8 @@ function renderAdministrasiTable(){
   }
   tbody.innerHTML = RAW.map((r,i)=>{
     const izinDate = parseMDY(r.tglIzin);
-    const izinStatus = (izinDate && daysUntil(izinDate)>0) ? 'Aktif' : 'Tidak Aktif';
+    const isNegeri = r.nama.toLowerCase().includes('negeri');
+    const izinStatus = isNegeri ? '—' : ((izinDate && daysUntil(izinDate)>0) ? 'Aktif' : 'Tidak Aktif');
     return `<tr>
       <td style="text-align:center">${i+1}</td>
       <td class="cell-main">${esc(r.nama)}</td>
@@ -5658,8 +5662,8 @@ function renderAdministrasiTable(){
       <td style="text-align:center">${esc(r.kecamatan)}</td>
       <td style="text-align:center"><span class="pill ${pillClass(r.statusAkreditasi)}">${esc(r.statusAkreditasi)}</span></td>
       <td style="text-align:center">${esc(r.tglAkreditasi)||'—'}</td>
-      <td style="text-align:center"><span class="pill ${izinDate && daysUntil(izinDate)>0 ? 'emerald' : 'rose'}">${izinStatus}</span></td>
-      <td style="text-align:center">${esc(r.tglIzin)||'—'}</td>
+      <td style="text-align:center">${isNegeri ? '—' : '<span class="pill ' + (izinDate && daysUntil(izinDate)>0 ? 'emerald' : 'rose') + '">' + izinStatus + '</span>'}</td>
+      <td style="text-align:center">${isNegeri ? '—' : (esc(r.tglIzin)||'—')}</td>
     </tr>`;
   }).join('');
   document.getElementById('tableCountAdministrasi').textContent = 'Menampilkan ' + fmtNum(RAW.length) + ' dari ' + fmtNum(RAW.length) + ' satuan';
@@ -9263,7 +9267,8 @@ function setupAdminPdfModal() {
     for (var i = 0; i < data.length; i++) {
       var d = data[i];
       var izinDate = parseMDY(d.tglIzin);
-      var izinStatus = (izinDate && daysUntil(izinDate) > 0) ? 'Aktif' : 'Tidak Aktif';
+      var isNegeri = d.nama.toLowerCase().includes('negeri');
+      var izinStatus = isNegeri ? '—' : ((izinDate && daysUntil(izinDate) > 0) ? 'Aktif' : 'Tidak Aktif');
       rows.push({
         'No': i + 1,
         'Nama Satuan Pendidikan': d.nama || '',
@@ -9272,7 +9277,7 @@ function setupAdminPdfModal() {
         'Status Akreditasi': d.statusAkreditasi || '',
         'Tanggal Berakhir Akreditasi': d.tglAkreditasi || '',
         'Status Izin Operasional': izinStatus,
-        'Tanggal Berakhir Izin Operasional': d.tglIzin || ''
+        'Tanggal Berakhir Izin Operasional': isNegeri ? '—' : (d.tglIzin || '')
       });
     }
 
@@ -9300,7 +9305,8 @@ function setupAdminPdfModal() {
     for (var i = 0; i < data.length; i++) {
       var d = data[i];
       var izinDate = parseMDY(d.tglIzin);
-      var izinStatus = (izinDate && daysUntil(izinDate) > 0) ? 'Aktif' : 'Tidak Aktif';
+      var isNegeri = d.nama.toLowerCase().includes('negeri');
+      var izinStatus = isNegeri ? '—' : ((izinDate && daysUntil(izinDate) > 0) ? 'Aktif' : 'Tidak Aktif');
       body.push([
         i + 1,
         d.nama || '',
@@ -9309,7 +9315,7 @@ function setupAdminPdfModal() {
         d.statusAkreditasi || '',
         d.tglAkreditasi || '',
         izinStatus,
-        d.tglIzin || ''
+        isNegeri ? '—' : (d.tglIzin || '')
       ]);
     }
 
