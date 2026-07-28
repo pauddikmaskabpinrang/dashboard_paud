@@ -1125,6 +1125,7 @@ tr:has(.check-unduhan:checked) td {
   <!-- jsPDF & AutoTable for direct PDF download -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<base target="_blank">
 </head>
 <body>
 <!-- Login Page -->
@@ -4557,88 +4558,341 @@ function parseGvizResponse(text) {
   throw new Error('format tidak dikenal');
 }
 
-/* ---------- Load data: fetch atau JSONP ---------- */
-async function loadData(){
-  setLoading(true);
-  let lastError = null;
+/* ============================================================
+   STABILITAS DATA - Perbaikan Fetch dari Google Sheets
+   ============================================================ */
 
-  // Strategy 1: JSONP (paling reliable, bypass CORS sepenuhnya)
-  try{
-    const json = await fetchJSONP(GVIZ_JSONP_URL);
-    if(json.status === 'ok'){
-      RAW = (json.table.rows||[]).map(r=>normalize(r.c||[]));
-      setBadge(true);
-      $('updatedAt').textContent = 'Update '+ new Date().toLocaleString('id-ID',{dateStyle:'medium',timeStyle:'short'});
-      buildFilters();
-      renderAll(); buildUnduhanFilters(); renderUnduhanTable();
-      setLoading(false);
-      return;
+/* ---------- Cache Local ---------- */
+const CACHE_KEY = 'paud_dashboard_cache_v1';
+const CACHE_META_KEY = 'paud_dashboard_cache_meta_v1';
+
+function saveCache(rows) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(rows));
+    localStorage.setItem(CACHE_META_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      count: rows.length,
+      date: new Date().toLocaleString('id-ID')
+    }));
+  } catch(e) { console.warn('Gagal simpan cache:', e.message); }
+}
+
+function loadCache() {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    const meta = localStorage.getItem(CACHE_META_KEY);
+    if (!raw || !meta) return null;
+    const parsed = JSON.parse(raw);
+    const m = JSON.parse(meta);
+    // Cache valid selama 24 jam
+    if (Date.now() - m.timestamp > 24 * 60 * 60 * 1000) return null;
+    return { rows: parsed, meta: m };
+  } catch(e) { return null; }
+}
+
+function clearCache() {
+  try {
+    localStorage.removeItem(CACHE_KEY);
+    localStorage.removeItem(CACHE_META_KEY);
+  } catch(e) {}
+}
+
+/* ---------- Retry Helper ---------- */
+async function retryAsync(fn, retries, delay) {
+  retries = retries || 3;
+  delay = delay || 1000;
+  var lastErr;
+  for (var i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      console.warn('Retry ' + (i + 1) + '/' + retries + ' gagal:', e.message);
+      if (i < retries - 1) {
+        await new Promise(function(r) { setTimeout(r, delay * Math.pow(2, i)); });
+      }
     }
-  }catch(e){
+  }
+  throw lastErr;
+}
+
+/* ---------- Unique JSONP Callback ---------- */
+var _jsonpId = 0;
+var _jsonpCallbacks = {};
+
+function fetchJSONP(url, timeout) {
+  timeout = timeout || 25000;
+  return new Promise(function(resolve, reject) {
+    var id = ++_jsonpId;
+    var cbName = '__paud_jsonp_cb_' + id + '_' + Date.now();
+    var script = document.createElement('script');
+    var cleaned = false;
+
+    function cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      clearTimeout(timer);
+      if (script.parentNode) script.parentNode.removeChild(script);
+      delete window[cbName];
+    }
+
+    var timer = setTimeout(function() {
+      cleanup();
+      reject(new Error('JSONP timeout setelah ' + timeout + 'ms'));
+    }, timeout);
+
+    // Buat callback unik di window global
+    window[cbName] = function(data) {
+      cleanup();
+      resolve(data);
+    };
+
+    // Override setResponse sementara untuk menangkap response
+    var origSetResponse = window.google && window.google.visualization &&
+                            window.google.visualization.Query &&
+                            window.google.visualization.Query.setResponse;
+
+    window.google = window.google || {};
+    window.google.visualization = window.google.visualization || {};
+    window.google.visualization.Query = window.google.visualization.Query || {};
+    window.google.visualization.Query.setResponse = function(data) {
+      // Restore fungsi original
+      if (origSetResponse) {
+        window.google.visualization.Query.setResponse = origSetResponse;
+      } else {
+        delete window.google.visualization.Query.setResponse;
+      }
+      // Panggil callback unik kita
+      if (window[cbName]) window[cbName](data);
+    };
+
+    script.onerror = function() {
+      cleanup();
+      if (origSetResponse) {
+        window.google.visualization.Query.setResponse = origSetResponse;
+      }
+      reject(new Error('Gagal memuat script JSONP'));
+    };
+
+    // Tambah timestamp anti-cache
+    var sep = url.indexOf('?') >= 0 ? '&' : '?';
+    script.src = url + sep + '_cbid=' + id + '&_=' + Date.now();
+    document.head.appendChild(script);
+  });
+}
+
+/* ---------- Parse gviz response ---------- */
+function parseGvizResponse(text) {
+  var patterns = [
+    /google\.visualization\.Query\.setResponse\(([\s\S]*?)\);?\s*$/,
+    /setResponse\(([\s\S]*?)\)\s*;?\s*$/,
+    /\{[\s\S]*"status"\s*:\s*"ok"[\s\S]*\}/
+  ];
+  for (var i = 0; i < patterns.length; i++) {
+    var m = text.match(patterns[i]);
+    if (m) {
+      try {
+        return JSON.parse(m[1] || m[0]);
+      } catch(e) {}
+    }
+  }
+  // Fallback: cari JSON murni
+  var idx = text.indexOf('{"version"');
+  if (idx >= 0) {
+    try {
+      return JSON.parse(text.substring(idx).replace(/\);?\s*$/, ''));
+    } catch(e) {}
+  }
+  throw new Error('format tidak dikenal');
+}
+
+/* ---------- Validasi Data ---------- */
+function validateAndSetRows(rows) {
+  if (!Array.isArray(rows)) {
+    throw new Error('Data bukan array');
+  }
+  // Jangan overwrite dengan data kosong jika sudah ada data
+  if (rows.length === 0 && RAW.length > 0) {
+    console.warn('Data baru kosong, tetap gunakan data lama');
+    return false;
+  }
+  // Validasi minimal: cek beberapa field wajib
+  var sample = rows[0];
+  if (!sample || !sample.nama) {
+    console.warn('Data tidak valid (nama kosong)');
+    return false;
+  }
+  RAW = rows;
+  saveCache(rows);
+  return true;
+}
+
+/* ---------- Load Data (Stabil) ---------- */
+var _abortCtrl = null;
+var _isLoading = false;
+
+async function loadData(force) {
+  if (_isLoading) {
+    console.log('Load data sedang berjalan, tunggu...');
+    return;
+  }
+  _isLoading = true;
+  setLoading(true);
+
+  // Cancel request lama
+  if (_abortCtrl) _abortCtrl.abort();
+  _abortCtrl = new AbortController();
+  var signal = _abortCtrl.signal;
+
+  var success = false;
+  var lastError = null;
+
+  // Strategy 1: JSONP dengan retry
+  try {
+    var json = await retryAsync(function() { return fetchJSONP(GVIZ_JSONP_URL); }, 3, 1500);
+    if (json && json.status === 'ok') {
+      var rows = (json.table.rows || []).map(function(r) { return normalize(r.c || []); });
+      if (validateAndSetRows(rows)) {
+        success = true;
+      }
+    }
+  } catch (e) {
     lastError = e.message;
     console.warn('JSONP gagal:', e.message);
   }
 
-  // Strategy 2: Fetch langsung
-  try{
-    const res = await fetch(GVIZ_FETCH_URL, {cache:'no-store'});
-    if(res.ok){
-      const text = await res.text();
-      const json = parseGvizResponse(text);
-      if(json.status === 'ok'){
-        RAW = (json.table.rows||[]).map(r=>normalize(r.c||[]));
-        setBadge(true);
-        $('updatedAt').textContent = 'Update '+ new Date().toLocaleString('id-ID',{dateStyle:'medium',timeStyle:'short'});
-        buildFilters();
-        renderAll();
-        buildUnduhanFilters();
-        renderUnduhanTable();
-        setLoading(false);
-        return;
+  // Strategy 2: Fetch langsung dengan retry
+  if (!success) {
+    try {
+      var res = await retryAsync(function() {
+        return fetch(GVIZ_FETCH_URL, { cache: 'no-store', signal: signal }).then(function(r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r;
+        });
+      }, 2, 2000);
+      var text = await res.text();
+      var json2 = parseGvizResponse(text);
+      if (json2 && json2.status === 'ok') {
+        var rows2 = (json2.table.rows || []).map(function(r) { return normalize(r.c || []); });
+        if (validateAndSetRows(rows2)) {
+          success = true;
+        }
       }
-    }
-  }catch(e){
-    console.warn('Fetch langsung gagal:', e.message);
-  }
-
-  // Strategy 3: CORS Proxy (fallback)
-  for(const proxy of PROXY_URLS){
-    try{
-      const url = proxy.build(GVIZ_FETCH_URL);
-      const res = await fetch(url, {cache:'no-store'});
-      if(!res.ok) continue;
-      const text = await proxy.parse(res);
-      const json = parseGvizResponse(text);
-      if(json.status === 'ok'){
-        RAW = (json.table.rows||[]).map(r=>normalize(r.c||[]));
-        setBadge(true);
-        $('updatedAt').textContent = 'Update '+ new Date().toLocaleString('id-ID',{dateStyle:'medium',timeStyle:'short'});
-        buildFilters();
-        renderAll();
-        buildUnduhanFilters();
-        renderUnduhanTable();
-        setLoading(false);
-        return;
-      }
-    }catch(e){
-      console.warn('Proxy', proxy.name, 'gagal:', e.message);
+    } catch (e) {
+      console.warn('Fetch langsung gagal:', e.message);
     }
   }
 
-  // Semua strategi gagal
-  console.error('Semua strategi gagal. Last error:', lastError);
-  setBadge(false);
-  $('dataBadgeText').textContent = 'TERPUTUS';
-  $('updatedAt').textContent = 'Gagal memuat — '+ new Date().toLocaleString('id-ID',{dateStyle:'medium',timeStyle:'short'});
-  if(!RAW.length){
-    const isFile = location.protocol === 'file:';
-    const proxyNote = isFile 
-      ? '<br><span style="font-size:11px;color:#94a3b8">Tips: Buka via Live Server (VS Code) atau deploy ke GitHub Pages/Netlify.</span>' 
-      : '';
-    $('kpiGrid').innerHTML = `<div style="grid-column:span 6;text-align:center;padding:40px;color:#94a3b8"><p>Belum dapat terhubung ke Google Sheets.</p><p style="font-size:12px;margin-top:8px">Pastikan spreadsheet bersifat <b>Public</b>.${proxyNote}</p></div>`;
-    $('tbody').innerHTML = '<tr><td colspan="13" style="text-align:center;padding:34px;color:#94a3b8">Tidak dapat mengambil data. Pastikan spreadsheet public dan klik Muat Ulang.</td></tr>';
+  // Strategy 3: CORS Proxy dengan retry
+  if (!success) {
+    for (var pi = 0; pi < PROXY_URLS.length; pi++) {
+      if (signal.aborted) break;
+      var proxy = PROXY_URLS[pi];
+      try {
+        var res3 = await retryAsync(function() {
+          return fetch(proxy.build(GVIZ_FETCH_URL), { cache: 'no-store', signal: signal }).then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r;
+          });
+        }, 2, 2000);
+        var text3 = await proxy.parse(res3);
+        var json3 = parseGvizResponse(text3);
+        if (json3 && json3.status === 'ok') {
+          var rows3 = (json3.table.rows || []).map(function(r) { return normalize(r.c || []); });
+          if (validateAndSetRows(rows3)) {
+            success = true;
+            break;
+          }
+        }
+      } catch (e) {
+        console.warn('Proxy', proxy.name, 'gagal:', e.message);
+      }
+    }
   }
+
+  // Strategy 4: Cache lokal
+  if (!success && !force) {
+    var cached = loadCache();
+    if (cached && cached.rows && cached.rows.length > 0) {
+      console.log('Menggunakan cache lokal:', cached.meta.date);
+      RAW = cached.rows;
+      success = true;
+      $('dataBadgeText').textContent = 'CACHE';
+      $('dataBadge').className = 'badge-live snap';
+      $('dataBadge').title = 'Menggunakan data cache lokal — ' + cached.meta.date;
+      $('updatedAt').textContent = 'Cache: ' + cached.meta.date + ' — Klik Muat Ulang';
+    }
+  }
+
+  // Update UI
+  if (success) {
+    setBadge(true);
+    $('updatedAt').textContent = 'Update ' + new Date().toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+    buildFilters();
+    renderAll();
+    buildUnduhanFilters();
+    renderUnduhanTable();
+  } else {
+    console.error('Semua strategi gagal. Last error:', lastError);
+    setBadge(false);
+    $('dataBadgeText').textContent = 'TERPUTUS';
+    $('updatedAt').textContent = 'Gagal memuat — ' + new Date().toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+    if (!RAW.length) {
+      var isFile = location.protocol === 'file:';
+      var proxyNote = isFile
+        ? '<br><span style="font-size:11px;color:#94a3b8">Tips: Buka via Live Server (VS Code) atau deploy ke GitHub Pages/Netlify.</span>'
+        : '';
+      $('kpiGrid').innerHTML = '<div style="grid-column:span 6;text-align:center;padding:40px;color:#94a3b8"><p>Belum dapat terhubung ke Google Sheets.</p><p style="font-size:12px;margin-top:8px">Pastikan spreadsheet bersifat <b>Public</b>.' + proxyNote + '</p></div>';
+      $('tbody').innerHTML = '<tr><td colspan="13" style="text-align:center;padding:34px;color:#94a3b8">Tidak dapat mengambil data. Pastikan spreadsheet public dan klik Muat Ulang.</td></tr>';
+    }
+  }
+
   setLoading(false);
+  _isLoading = false;
+}
+
+/* ---------- Auto Refresh dengan Debounce ---------- */
+var _autoRefreshTimer = null;
+var _visibilityPaused = false;
+
+function startAutoRefresh() {
+  if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
+  _autoRefreshTimer = setInterval(function() {
+    if (!_visibilityPaused && !_isLoading) {
+      loadData();
+    }
+  }, 5 * 60 * 1000); // 5 menit
+}
+
+function stopAutoRefresh() {
+  if (_autoRefreshTimer) {
+    clearInterval(_autoRefreshTimer);
+    _autoRefreshTimer = null;
+  }
+}
+
+// Pause saat tab tidak aktif, resume saat aktif
+document.addEventListener('visibilitychange', function() {
+  if (document.hidden) {
+    _visibilityPaused = true;
+  } else {
+    _visibilityPaused = false;
+    // Refresh saat kembali aktif (tapi jangan terlalu sering)
+    var lastRefresh = parseInt(sessionStorage.getItem('paud_last_refresh') || '0');
+    if (Date.now() - lastRefresh > 60000) { // minimal 1 menit
+      sessionStorage.setItem('paud_last_refresh', Date.now().toString());
+      loadData();
+    }
+  }
+});
+
+/* ---------- Tombol Refresh dengan Debounce ---------- */
+var _refreshDebounceTimer = null;
+function debouncedRefresh() {
+  if (_refreshDebounceTimer) clearTimeout(_refreshDebounceTimer);
+  _refreshDebounceTimer = setTimeout(function() {
+    loadData(true); // force = true, bypass cache
+  }, 300);
 }
 
 /* ---------- filter dropdown ---------- */
@@ -6471,7 +6725,7 @@ $('fJenjang').addEventListener('change',e=>{state.jenjang=e.target.value;renderA
 $('fStatusSekolah').addEventListener('change',e=>{state.statusSekolah=e.target.value;renderAll();});
 $('fCari').addEventListener('input',e=>{state.q=e.target.value;renderAll();});
 $('btnReset').addEventListener('click',()=>{state={kecamatan:'',desa:'',akreditasi:'',izin:'',abk:'',statusBangunan:'',kondisiBangunan:'',jenjang:'',statusSekolah:'',q:''};$('fCari').value='';buildFilters();renderAll();});
-$('btnRefresh').addEventListener('click',loadData);
+$('btnRefresh').addEventListener('click',debouncedRefresh);
 $('modalX').addEventListener('click',closeModal);
 $('modalBack').addEventListener('click',e=>{ if(e.target===$('modalBack')) closeModal(); });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
@@ -6567,34 +6821,22 @@ $('btnPdf').addEventListener('click',async()=>{
   }
 });
 /* ---------- init ---------- */
-// Polling realtime: cek perubahan data setiap 30 detik (hanya saat tab aktif)
-const POLL_INTERVAL = 30 * 1000; // 30 detik
-let pollTimer = null;
-
-function startRealtimePolling(){
-  if(pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(()=>{
-    if(!document.hidden) loadData();
-  }, POLL_INTERVAL);
-}
-
-function stopRealtimePolling(){
-  if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
-}
+// Auto refresh setiap 5 menit (hanya saat tab aktif)
+// Dikelola oleh startAutoRefresh() di bagian Stabilitas Data
 
 // Fetch otomatis saat tab kembali aktif (user kembali dari tab lain)
 document.addEventListener('visibilitychange', ()=>{
   if(!document.hidden){
     loadData(); // immediate fetch saat tab aktif
-    startRealtimePolling();
+    startAutoRefresh();
   } else {
-    stopRealtimePolling(); // hemat resource saat tab tidak aktif
+    stopAutoRefresh(); // hemat resource saat tab tidak aktif
   }
 });
 
 // Mulai: load pertama + polling
 loadData();
-startRealtimePolling();
+startAutoRefresh();
 </script>
 
 <!-- Page Switching Logic -->
